@@ -1,0 +1,180 @@
+https://baijiahao.baidu.com/s?id=1741010542595238856&wfr=spider&for=pc
+用了那么久的 Lombok，你知道它的原理么？
+
+阿里云云栖号
+
+2022-08-13 10:17
+阿里云计算有限公司
+关注
+
+序言
+在写Java代码的时候，最烦写setter/getter方法，自从有了Lombok插件不用再写那些方法之后，感觉再也回不去了，那你们是否好奇过Lombok是怎么把setter/getter方法给你加上去的呢？有的同学说我们Java引入Lombok之后会污染依赖包，那我们可不可以自己写一个工具来代替Lombok呢？
+
+知识点
+Java编译过程
+了解Lombok原理
+了解插入式注解处理器
+分析
+序言提到的问题其实都是同一个问题，就是如何去获取和修改Java源代码？
+
+要回答这个问题，我们需要回答这几个问题：
+
+Java编译器是如何解析Java源代码的？
+编译器编译源代码都有哪些步骤？
+我们在编译器工作的时候，怎么才能去增加内容或者是进行代码分析？
+希望大家看完本文能够自己写一个简易的Lombok工具。
+
+回答
+如何解析源代码
+
+其实从我们的代码到被编译，中间隔了一个数据结构，叫做AST（抽象树）。具体的形式，可以查看下面的图片。右边的便是AST的数据结构了。
+
+
+代码编译都有哪些步骤
+
+整个编译过程大致如下：
+
+
+图片来自 openjdk
+
+1、初始化插入注解处理器
+
+2、解析与填充符号表过程
+
+a.词法分析、语法分析。将源代码的字符流转变为标记集合，构造出抽象语法树。
+
+b.填充符号表。产生符号地址和符号信息。
+
+3、插入式注解处理器的注解处理过程：插入式注解处理器的执行阶段。后面我会给大家带来两个此方面的实用实战例子。
+
+4、分析与字节码生成过程
+
+a.标注检查。对语法的静态信息检查。
+
+b.数据流及控制流分析。对程序动态运行过程进行检查。
+
+c.解语法糖。将简化代码编写的语法糖还原为原有的形式。
+
+d.字节码生成。将前面各个步骤所生成的信息转化成为字节码。
+
+我们知道了上面的理论之后，接下来我们进行实战。带着大家一起去修改AST（抽象树）。添加自己的代码。
+
+实战
+如何自己实现一个自动添加Setter/Getter的工具
+
+首先，我们创建一个自己的注解。
+
+@Retention(RetentionPolicy.SOURCE) // 注解只在源码中保留@Target(ElementType.TYPE) // 用于修饰类public @interface MySetterGetter {}
+创建一个需要生成setter/getter方法的实体类
+
+@MySetterGetter  // 打上我们的注解public class Test {    private String wzj;}
+接下来就来看一看如何来生成我们想要的字符串。
+
+整体代码如下：
+
+@SupportedAnnotationTypes("com.study.practice.nameChecker.MySetterGetter")@SupportedSourceVersion(SourceVersion.RELEASE_8)public class MySetterGetterProcessor extends AbstractProcessor {    // 主要是输出信息    private Messager messager;    private JavacTrees javacTrees;    private TreeMaker treeMaker;    private Names names;    @Override    public synchronized void init(ProcessingEnvironment processingEnv) {        super.init(processingEnv);        this.messager = processingEnv.getMessager();        this.javacTrees = JavacTrees.instance(processingEnv);        Context context = ((JavacProcessingEnvironment)processingEnv).getContext();        this.treeMaker = TreeMaker.instance(context);        this.names = Names.instance(context);    }    @Override    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {        // 拿到被注解标注的所有的类        Set<? extends Element> elementsAnnotatedWith = roundEnv.getElementsAnnotatedWith(MySetterGetter.class);        elementsAnnotatedWith.forEach(element -> {            // 得到类的抽象树结构            JCTree tree = javacTrees.getTree(element);            // 遍历类，对类进行修改            tree.accept(new TreeTranslator(){                @Override                public void visitClassDef(JCTree.JCClassDecl jcClassDecl) {                    List<JCTree.JCVariableDecl> jcVariableDeclList = List.nil();                    // 在抽象树中找出所有的变量                    for(JCTree jcTree: jcClassDecl.defs){                        if (jcTree.getKind().equals(Tree.Kind.VARIABLE)){                            JCTree.JCVariableDecl jcVariableDecl = (JCTree.JCVariableDecl)jcTree;                            jcVariableDeclList = jcVariableDeclList.append(jcVariableDecl);                        }                    }                                        // 对于变量进行生成方法的操作                    for (JCTree.JCVariableDecl jcVariableDecl : jcVariableDeclList) {                        messager.printMessage(Diagnostic.Kind.NOTE, jcVariableDecl.getName() + " has been processed");                        jcClassDecl.defs = jcClassDecl.defs.prepend(makeSetterMethodDecl(jcVariableDecl));                        jcClassDecl.defs = jcClassDecl.defs.prepend(makeGetterMethodDecl(jcVariableDecl));                    }        // 生成返回对象        JCTree.JCExpression methodType = treeMaker.Type(new Type.JCVoidType());        return treeMaker.MethodDef(treeMaker.Modifiers(Flags.PUBLIC), getNewSetterMethodName(jcVariableDecl.getName()), methodType, List.nil(), parameters, List.nil(), block, null);    }    /**     * 生成 getter 方法     * @param jcVariableDecl     * @return     */    private JCTree.JCMethodDecl makeGetterMethodDecl(JCTree.JCVariableDecl jcVariableDecl){        ListBuffer<JCTree.JCStatement> statements = new ListBuffer<>();        // 生成表达式        JCTree.JCReturn aReturn = treeMaker.Return(treeMaker.Ident(jcVariableDecl.getName()));        statements.append(aReturn);        JCTree.JCBlock block = treeMaker.Block(0, statements.toList());        // 无入参        // 生成返回对象        JCTree.JCExpression returnType = treeMaker.Type(jcVariableDecl.getType().type);        return treeMaker.MethodDef(treeMaker.Modifiers(Flags.PUBLIC), getNewGetterMethodName(jcVariableDecl.getName()), returnType, List.nil(), List.nil(), List.nil(), block, null);    }    /**     * 拼装Setter方法名称字符串     * @param name     * @return     */    private Name getNewSetterMethodName(Name name) {        String s = name.toString();        return names.fromString("set" + s.substring(0,1).toUpperCase() + s.substring(1, name.length()));    }    /**     * 拼装 Getter 方法名称的字符串     * @param name     * @return     */    private Name getNewGetterMethodName(Name name) {        String s = name.toString();        return names.fromString("get" + s.substring(0,1).toUpperCase() + s.substring(1, name.length()));    }    /**     * 生成表达式     * @param lhs     * @param rhs     * @return     */    private JCTree.JCExpressionStatement makeAssignment(JCTree.JCExpression lhs, JCTree.JCExpression rhs) {        return treeMaker.Exec(                treeMaker.Assign(lhs, rhs)        );    }}
+代码有点多，我们逐一拆解说明：
+
+下面这是整个代码结构的脑图，后面的讲解会基于这个顺序。
+
+
+a. 注解
+
+@SupportedAnnotationTypes 表示我们需要监听的注解，比如我们之前定义的 @MySetterGetter。
+
+@SupportedSourceVersion 表示我们想要对什么版本的Java源代码进行处理。
+
+b. 父类
+
+AbstractProcessor是本次的核心类，编译器在编译的时候会扫描此类的子类。其中有一个子类必须实现的核心方法 public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv)，此方法如果是返回为true就说明编译的那个类抽象树的结构又变化，需要重新进行词法分析和语法分析（可以查看上面提到的那个编译流程图）。如果返回的是false就说明没有变化。
+
+c. process方法
+
+主要的操作逻辑是：
+
+1、拿到所有被我们MySetterGetter标注的类。
+
+2、遍历所有的类，生成类的抽象树结构。
+
+3、对类进行操作：
+
+a.找到类中所有的变量。
+
+b.对变量进行生成Set和Get方法。
+
+4、返回 true，说明类结构变了，需要重新解析。如果是false说明没有变，不用重新解析。
+
+d. 操作JCTree树
+
+主要是在操作抽象树，可以查看文末附件中的文章进行学习。
+
+e. 方法名称拼接
+
+这一块儿和字符串拼接没啥区别，用过反射的同学应该也都清楚这个操作了。
+
+到此为止，我们就已经介绍完了Lombok的原理。怎么样是不是很简单。接下来，就让我们把它运行起来，投入到实战之中。
+
+f. 运行
+
+最后来看一下如何正确的运行这个我们写的工具。
+
+1.环境
+
+我的系统环境是 macOs Monterey；
+
+java版本是
+
+openjdk version "1.8.0_302"OpenJDK Runtime Environment (Temurin)(build 1.8.0_302-b08)OpenJDK 64-Bit Server VM (Temurin)(build 25.302-b08, mixed mode)
+2.编译processor
+
+在你存放 MySetterGetter 和 MySetterGetterProcessor 两个类的目录下进行编译。
+
+javac -cp $JAVA_HOME/lib/tools.jar MySetterGetter.java MySetterGetterProcessor.java
+执行成功后会出现这三个class文件。
+
+
+3.声明插入式注解处理器
+
+
+在你的工程的resources下面创建一个包，名称为：META-INFO.services
+然后创建一个文件，名称为：javax.annotation.processing.Processor
+将你的注解处理器的地址填入，我的配置是这样的：
+com.study.practice.nameChecker.MySetterGetterProcessor
+
+4.用我们的工具去编译目标类
+
+比如我们本次是要编译那个test.java。
+
+它的内容再回顾一下：
+
+@MySetterGetter  // 打上我们的注解public class Test {    private String wzj;}
+然后我们就去编译它（注意类前面的路径。这个你们得换成自己的工程目录。）
+
+javac -processor com.study.practice.nameChecker.MySetterGetterProcessor com/study/practice/nameChecker/Test.java
+执行之后如果没有修改我的代码的话会打印这几个字符串：
+
+process 1process 2注: wzj has been processedprocess 1
+最后会生成Test.class文件。
+
+
+5.成果
+
+最后的class文件解析出来就是这个样子的。如下图所示：
+
+
+看到Setter/Getter方法就说明我们已经大功告成了！是不是很简单。
+
+到此为止，我们就学会了如何自己写一个属于自己的简易Lombok的插件了。
+
+附件
+
+treemarker 的介绍:
+
+http://www.docjar.com/docs/api/com/sun/tools/javac/tree/TreeMaker.html
+
+作者 | 王再军(曦峰)
+
+原文链接：https://click.aliyun.com/m/1000353148/
+
+本文为阿里云原创内容，未经允许不得转载。
+

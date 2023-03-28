@@ -22,3 +22,20 @@
 
    ![JDK1.1安全模型](../图片/JDK1.6安全模型.png)
 
+8. 但是我们写的代码几乎没有遇到没让写的地方 早期的时候会限制JVM溢出的情况 现在不限制了 因为一旦溢出了就根本实现不了了
+
+   ```java
+   public class Test{
+     public static void main(String[] args){
+       new Test().a();//如果这样互相递归执行调用 过一会之后就会报一个栈溢出的错误 很多很多不间断
+     }
+     public void a(){
+       b();
+     }
+     public void b(){
+       a();
+     }
+   }
+   ```
+
+9. 所以说java其实是可以写病毒的，比如文件操作疯狂循环生成文件把电脑占满

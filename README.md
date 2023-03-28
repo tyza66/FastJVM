@@ -6,5 +6,6 @@
 - Class03：类加载器及双亲委派机制
 - Class04：沙箱安全机制
 - Class05：Native关键字和方法区
+- Class06：深入了解栈
 
 By：tyza66(洮羱芝闇)

@@ -14,6 +14,6 @@
 - Class11：GC介绍之复制方法
 - Class12：GC之标记压缩清除算法
 - Class13：GC算法总结
-- Class14：如何让快速学习方法
+- Class14：JMM
 
 By：tyza66(洮羱芝闇)
